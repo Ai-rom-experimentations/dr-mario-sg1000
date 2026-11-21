@@ -394,7 +394,7 @@ start_game:
     jp spawn_pill
 
 ; --------------------------------------------------------------------------
-; spawn_viruses: (level + 1) * 4 viruses in the upper ten rows
+; spawn_viruses: (level + 1) * 4 viruses in rows 2-9, leaving spawn rows clear
 ; --------------------------------------------------------------------------
 spawn_viruses:
     ld a,(level)
@@ -412,12 +412,14 @@ spawn_viruses:
     jr nz,.loop
     ret
 
-; spawn_one_virus: drop a virus into a random free cell of rows 0-9
+; spawn_one_virus: drop a virus into a random free cell of rows 2-9.
+; Keep rows 0-1 open so the pill can spawn and rotate into the bottle.
 spawn_one_virus:
     ld c,250                    ; placement attempts
 .try:
-    ld b,10
-    call rnd_mod                ; row 0..9
+    ld b,8
+    call rnd_mod                ; row 0..7
+    add a,2                     ; actual row 2..9
     ld (tmp1),a
     ld b,8
     call rnd_mod                ; column 0..7
