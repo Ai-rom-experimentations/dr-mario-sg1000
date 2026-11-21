@@ -1,0 +1,233 @@
+#!/usr/bin/env python3
+"""Generate the SG-1000 tile set for the Dr. Mario prototype.
+
+The SG-1000's TMS9918A is used in Graphics I mode, where one colour-table
+entry covers a group of eight tiles.  The tile map below is therefore laid
+out so that every group of eight consecutive tiles shares a single
+foreground/background pair:
+
+    group  tiles       contents                       colours
+    0-4    0x00-0x27   digits, letters, punctuation    white on black
+    5      0x28-0x2f   bottle frame                    gray on black
+    6      0x30-0x37   yellow pills + yellow virus     light yellow on black
+    7      0x38-0x3f   red pills + red virus           light red on black
+    8      0x40-0x47   blue pills + blue virus         light blue on black
+    9      0x48-0x4f   spare                           green on black
+
+Only the 1bpp bitmap is stored in VRAM; the colour comes from the colour
+table (background) or the sprite attribute table (sprites), so one shape can
+be reused in any colour for sprites.
+
+Outputs: src/tiles.asm  (pattern data, colour table, sprite patterns)
+"""
+
+import os
+
+OUT = os.path.join(os.path.dirname(__file__), '..', 'src', 'tiles.asm')
+
+# --- TMS9918A palette indices ------------------------------------------------
+C_BLACK = 0x01
+C_GRAY = 0x0E
+C_WHITE = 0x0F
+C_LYELLOW = 0x0B
+C_LRED = 0x09
+C_LBLUE = 0x05
+C_LGREEN = 0x03
+
+# --- tile numbers ------------------------------------------------------------
+T_DIGIT0 = 0x00          # 0x00-0x09  '0'-'9'
+T_A = 0x0A               # 0x0a-0x23  'A'-'Z'
+T_SPACE = 0x24
+T_COLON = 0x25
+T_DASH = 0x26
+T_BANG = 0x27
+T_BOTTLE = 0x28          # 0x28-0x2f  frame pieces
+T_PILL = 0x30            # + colour*8 + shape
+T_VIRUS = 0x36           # + colour*8
+T_SPARE = 0x37           # + colour*8
+
+TILE_GROUPS = 10
+TILES_TO_LOAD = 0x50
+
+# pill shapes (index into a colour's group)
+S_TOP, S_BOTTOM, S_LEFT, S_RIGHT, S_SINGLE, S_FLASH = range(6)
+
+# --- 8x8 font ----------------------------------------------------------------
+FONT = {
+    '0': (0x3C, 0x66, 0x6E, 0x76, 0x66, 0x66, 0x3C, 0x00),
+    '1': (0x18, 0x18, 0x38, 0x18, 0x18, 0x18, 0x7E, 0x00),
+    '2': (0x3C, 0x66, 0x06, 0x0C, 0x18, 0x30, 0x7E, 0x00),
+    '3': (0x3C, 0x66, 0x06, 0x1C, 0x06, 0x66, 0x3C, 0x00),
+    '4': (0x0C, 0x1C, 0x3C, 0x6C, 0x7E, 0x0C, 0x0C, 0x00),
+    '5': (0x7E, 0x60, 0x7C, 0x06, 0x06, 0x66, 0x3C, 0x00),
+    '6': (0x1C, 0x30, 0x60, 0x7C, 0x66, 0x66, 0x3C, 0x00),
+    '7': (0x7E, 0x66, 0x06, 0x0C, 0x18, 0x18, 0x18, 0x00),
+    '8': (0x3C, 0x66, 0x66, 0x3C, 0x66, 0x66, 0x3C, 0x00),
+    '9': (0x3C, 0x66, 0x66, 0x3E, 0x06, 0x0C, 0x18, 0x00),
+    'A': (0x18, 0x3C, 0x66, 0x66, 0x7E, 0x66, 0x66, 0x00),
+    'B': (0x7C, 0x66, 0x66, 0x7C, 0x66, 0x66, 0x7C, 0x00),
+    'C': (0x3C, 0x66, 0x60, 0x60, 0x60, 0x66, 0x3C, 0x00),
+    'D': (0x78, 0x6C, 0x66, 0x66, 0x66, 0x6C, 0x78, 0x00),
+    'E': (0x7E, 0x60, 0x60, 0x78, 0x60, 0x60, 0x7E, 0x00),
+    'F': (0x7E, 0x60, 0x60, 0x78, 0x60, 0x60, 0x60, 0x00),
+    'G': (0x3C, 0x66, 0x60, 0x6E, 0x66, 0x66, 0x3C, 0x00),
+    'H': (0x66, 0x66, 0x66, 0x7E, 0x66, 0x66, 0x66, 0x00),
+    'I': (0x3C, 0x18, 0x18, 0x18, 0x18, 0x18, 0x3C, 0x00),
+    'J': (0x1E, 0x0C, 0x0C, 0x0C, 0x0C, 0x6C, 0x38, 0x00),
+    'K': (0x66, 0x66, 0x6C, 0x78, 0x6C, 0x66, 0x66, 0x00),
+    'L': (0x60, 0x60, 0x60, 0x60, 0x60, 0x60, 0x7E, 0x00),
+    'M': (0x63, 0x77, 0x7F, 0x6B, 0x63, 0x63, 0x63, 0x00),
+    'N': (0x66, 0x76, 0x7E, 0x7E, 0x6E, 0x66, 0x66, 0x00),
+    'O': (0x3C, 0x66, 0x66, 0x66, 0x66, 0x66, 0x3C, 0x00),
+    'P': (0x7C, 0x66, 0x66, 0x7C, 0x60, 0x60, 0x60, 0x00),
+    'Q': (0x3C, 0x66, 0x66, 0x66, 0x6E, 0x3C, 0x0E, 0x00),
+    'R': (0x7C, 0x66, 0x66, 0x7C, 0x6C, 0x66, 0x66, 0x00),
+    'S': (0x3C, 0x66, 0x60, 0x3C, 0x06, 0x66, 0x3C, 0x00),
+    'T': (0x7E, 0x18, 0x18, 0x18, 0x18, 0x18, 0x18, 0x00),
+    'U': (0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x3C, 0x00),
+    'V': (0x66, 0x66, 0x66, 0x66, 0x66, 0x3C, 0x18, 0x00),
+    'W': (0x63, 0x63, 0x63, 0x6B, 0x7F, 0x77, 0x63, 0x00),
+    'X': (0x66, 0x66, 0x3C, 0x18, 0x3C, 0x66, 0x66, 0x00),
+    'Y': (0x66, 0x66, 0x66, 0x3C, 0x18, 0x18, 0x18, 0x00),
+    'Z': (0x7E, 0x06, 0x0C, 0x18, 0x30, 0x60, 0x7E, 0x00),
+    ' ': (0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00),
+    ':': (0x00, 0x18, 0x18, 0x00, 0x18, 0x18, 0x00, 0x00),
+    '-': (0x00, 0x00, 0x00, 0x7E, 0x00, 0x00, 0x00, 0x00),
+    '!': (0x18, 0x18, 0x18, 0x18, 0x18, 0x00, 0x18, 0x00),
+}
+
+# --- pill / bottle shapes ----------------------------------------------------
+# A vertical capsule split into upper and lower halves.  The seam row is
+# pinched inwards so two halves read as one capsule when stacked.
+PILL_TOP = (0x3C, 0x7E, 0x7E, 0x7E, 0x7E, 0x7E, 0x7E, 0x66)
+PILL_BOTTOM = (0x66, 0x7E, 0x7E, 0x7E, 0x7E, 0x7E, 0x7E, 0x3C)
+
+
+def rot90cw(b):
+    """Rotate an 8x8 bitmap 90 degrees clockwise."""
+    out = []
+    for y in range(8):
+        v = 0
+        for x in range(8):
+            if b[7 - x] & (0x80 >> y):
+                v |= 0x80 >> x
+        out.append(v)
+    return tuple(out)
+
+
+PILL_LEFT = rot90cw(PILL_BOTTOM)
+PILL_RIGHT = rot90cw(PILL_TOP)
+PILL_SINGLE = (0x00, 0x3C, 0x7E, 0x7E, 0x7E, 0x7E, 0x3C, 0x00)
+PILL_FLASH = (0x00, 0x24, 0x5A, 0x7E, 0x7E, 0x5A, 0x24, 0x00)
+
+# virus: a spiky blob with two eyes
+VIRUS = (0x18, 0x3C, 0xFF, 0xDB, 0xFF, 0x7E, 0x3C, 0x18)
+
+# bottle frame: two-pixel thick walls
+W_ = 0xC0           # left wall (2 px)
+_R = 0x03           # right wall (2 px)
+TL = (W_, W_, W_, W_, W_, W_, 0xFF, 0xFF)
+T_ = (0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xFF, 0xFF)
+TR = (_R, _R, _R, _R, _R, _R, 0xFF, 0xFF)
+L_ = (W_,) * 8
+R_ = (_R,) * 8
+BL = (0xFF, 0xFF, W_, W_, W_, W_, W_, W_)
+B_ = (0xFF, 0xFF, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00)
+BR = (0xFF, 0xFF, _R, _R, _R, _R, _R, _R)
+SPARE = (0x00, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x00)
+
+# --- sprite patterns (8x8) ---------------------------------------------------
+# Dr. Mario, 16x24, three horizontal bands: cap / face / overalls.  Each band
+# is two 8x8 sprites, so the whole character is six hardware sprites.
+MARIO_CAP_L = (0x18, 0x3C, 0x3C, 0x7E, 0x7E, 0xFF, 0xFF, 0x00)
+MARIO_CAP_R = (0x18, 0x3C, 0x3C, 0x7E, 0x7E, 0xFF, 0xFF, 0x00)
+MARIO_FACE_L = (0x7E, 0xFF, 0xE7, 0xFF, 0x7E, 0x3C, 0x00, 0x00)
+MARIO_FACE_R = (0x7E, 0xFF, 0xE7, 0xFF, 0x7E, 0x3C, 0x00, 0x00)
+MARIO_BODY_L = (0x3C, 0x7E, 0xDB, 0xFF, 0xFF, 0xE7, 0x42, 0x00)
+MARIO_BODY_R = (0x3C, 0x7E, 0xDB, 0xFF, 0xFF, 0xE7, 0x42, 0x00)
+
+SPRITE_PATTERNS = [
+    MARIO_CAP_L, MARIO_CAP_R,        # 0,1  cap
+    MARIO_FACE_L, MARIO_FACE_R,      # 2,3  face
+    MARIO_BODY_L, MARIO_BODY_R,      # 4,5  overalls
+    PILL_TOP, PILL_BOTTOM,           # 6,7
+    PILL_LEFT, PILL_RIGHT,           # 8,9
+    PILL_SINGLE, PILL_FLASH,         # 10,11
+]
+
+
+def build():
+    tiles = [(0,) * 8 for _ in range(TILES_TO_LOAD)]
+    colours = [0x00] * TILES_TO_LOAD
+
+    def put(n, bmp, colour):
+        tiles[n] = bmp
+        colours[n] = colour
+
+    white_black = (C_WHITE << 4) | C_BLACK
+    for i, ch in enumerate('0123456789'):
+        put(T_DIGIT0 + i, FONT[ch], white_black)
+    for i, ch in enumerate('ABCDEFGHIJKLMNOPQRSTUVWXYZ'):
+        put(T_A + i, FONT[ch], white_black)
+    put(T_SPACE, FONT[' '], white_black)
+    put(T_COLON, FONT[':'], white_black)
+    put(T_DASH, FONT['-'], white_black)
+    put(T_BANG, FONT['!'], white_black)
+
+    frame_colour = (C_GRAY << 4) | C_BLACK
+    for i, bmp in enumerate((TL, T_, TR, L_, R_, BL, B_, BR)):
+        put(T_BOTTLE + i, bmp, frame_colour)
+
+    shapes = (PILL_TOP, PILL_BOTTOM, PILL_LEFT, PILL_RIGHT, PILL_SINGLE, PILL_FLASH)
+    for c, pal in enumerate((C_LYELLOW, C_LRED, C_LBLUE)):
+        colour = (pal << 4) | C_BLACK
+        for s, bmp in enumerate(shapes):
+            put(T_PILL + c * 8 + s, bmp, colour)
+        put(T_VIRUS + c * 8, VIRUS, colour)
+        put(T_SPARE + c * 8, SPARE, colour)
+
+    return tiles, colours
+
+
+def emit():
+    tiles, colours = build()
+    out = []
+    w = out.append
+    w('; ==========================================================================')
+    w('; Generated by tools/gen_tiles.py -- do not edit by hand.')
+    w(';')
+    w('; Graphics I tile set: every group of eight tiles shares one colour entry,')
+    w('; so only 1bpp patterns are stored here.')
+    w('; ==========================================================================')
+    w('')
+    w('TILES_TO_LOAD equ 0x%02X' % TILES_TO_LOAD)
+    w('')
+    w('; --- pattern generator table (VRAM 0x0000) -------------------------------')
+    w('tiles_data:')
+    for n in range(TILES_TO_LOAD):
+        if n % 8 == 0:
+            w('    ; group $%02x  tiles $%02x-$%02x' % (n >> 3, n, n + 7))
+        w('    db ' + ','.join('$%02X' % b for b in tiles[n]))
+    w('')
+    w('; --- colour table (VRAM 0x2000), one byte per group of eight tiles ------')
+    w('; high nibble = foreground, low nibble = background')
+    w('tiles_colour:')
+    for g in range(TILE_GROUPS):
+        w('    db $%02X' % colours[g * 8] + '   ; tiles $%02x-$%02x'
+          % (g * 8, g * 8 + 7))
+    w('')
+    w('; --- sprite patterns (VRAM 0x3800) ---------------------------------------')
+    w('sprite_patterns:')
+    for i, bmp in enumerate(SPRITE_PATTERNS):
+        w('    db ' + ','.join('$%02X' % b for b in bmp) + '   ; sprite %d' % i)
+    w('')
+    w('SPRITE_PATTERN_COUNT equ %d' % len(SPRITE_PATTERNS))
+    w('')
+    return '\n'.join(out)
+
+
+if __name__ == '__main__':
+    os.makedirs(os.path.dirname(OUT), exist_ok=True)
+    with open(OUT, 'w') as f:
+        f.write(emit())
+    print('wrote', os.path.normpath(OUT))
