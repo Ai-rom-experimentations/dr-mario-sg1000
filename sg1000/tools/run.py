@@ -209,8 +209,6 @@ class VDP:
             col = self.vram[base + 3]
             if col & 0x80:
                 x -= 32
-            else:
-                continue
             col &= 0x0F
             if col == 0:
                 continue

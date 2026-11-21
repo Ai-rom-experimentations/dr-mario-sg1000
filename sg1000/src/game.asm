@@ -1492,50 +1492,6 @@ render_sprites:
     jp z,hide_sprites
     ld hl,sprite_buf
 
-    ; --- Dr. Mario: three 16x8 bands, bobbing gently
-    ld a,(frame_counter)
-    and 0x08
-    rrca
-    rrca
-    rrca                        ; 0 or 1
-    ld e,a
-    ld a,(pill_y)
-    add a,a
-    add a,a
-    add a,a                     ; row * 8
-    add a,FIELD_Y0*8
-    sub 16
-    add a,e
-    ld c,a                      ; y
-    ld b,144                    ; x
-    ld d,C_WHITE
-    ld e,0                      ; first pattern
-    ld a,6                      ; six 8x8 sprites
-.bands:
-    push af
-    push bc
-    push de
-    ld a,e
-    call put_sprite
-    pop de
-    push de
-    ld a,b
-    add a,8
-    ld b,a
-    ld a,e
-    inc a
-    call put_sprite
-    pop de
-    pop bc
-    inc e
-    inc e
-    ld a,c
-    add a,8
-    ld c,a
-    pop af
-    dec a
-    jr nz,.bands
-
     ; --- the falling pill
     ld a,(pill_active)
     or a
@@ -1633,9 +1589,11 @@ put_sprite:
 
 ; colour_of: A = pill colour index -> A = sprite colour
 colour_of:
+    push hl                       ; preserve the caller's sprite-buffer pointer
     ld e,a
     ld d,0
     ld hl,pill_colours
     add hl,de
     ld a,(hl)
+    pop hl
     ret
